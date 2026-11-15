@@ -1,0 +1,65 @@
+name: Build APK
+
+on:
+  push:
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Cari proyek (langsung di repo, atau ekstrak file zip)
+        id: proj
+        run: |
+          if [ -f settings.gradle.kts ]; then
+            ROOT="."
+          else
+            ZIP=$(ls -t *.zip 2>/dev/null | head -n1)
+            if [ -z "$ZIP" ]; then echo "Tidak ada proyek atau file zip di repo"; exit 1; fi
+            echo "Mengekstrak $ZIP"
+            rm -rf _src && mkdir _src && unzip -q -o "$ZIP" -d _src
+            ROOT=$(dirname "$(find _src -name settings.gradle.kts -print -quit)")
+          fi
+          echo "root=$ROOT" >> "$GITHUB_OUTPUT"
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 17
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Pasang Pillow
+        run: pip install pillow
+
+      - name: Validasi resep
+        working-directory: ${{ steps.proj.outputs.root }}
+        run: python tools/validate_recipes.py
+
+      - name: Ambil foto makanan (Wikimedia Commons)
+        working-directory: ${{ steps.proj.outputs.root }}
+        run: python tools/fetch_images.py
+
+      - uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: "8.7"
+
+      - name: Build APK debug
+        working-directory: ${{ steps.proj.outputs.root }}
+        run: gradle assembleDebug --no-daemon --stacktrace
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: RECIPE-BOOK-APK
+          path: ${{ steps.proj.outputs.root }}/app/build/outputs/apk/debug/app-debug.apk
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: laporan-foto
+          path: ${{ steps.proj.outputs.root }}/build_report.txt
+          if-no-files-found: ignore
